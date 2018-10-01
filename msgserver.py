@@ -1,40 +1,108 @@
 import sys
 try:
     from urlparse import urlparse, parse_qsl
+    from Queue import Queue
+    
 except:
     from urllib.parse import urlparse, parse_qsl
+    from queue import Queue
+from multiprocessing import Process
 from http.server import BaseHTTPRequestHandler, HTTPServer
+
 
 class RequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed_url = urlparse(self.path)
-        app_name = parsed_url.path[1:]
+        command = parsed_url.path[1:]
         kwargs = dict(parse_qsl(parsed_url.query))
-        print(app_name, kwargs)
-        result = ''
-        for func in globals()['apps']:
-            if app_name == func.__name__:
-                result = func(**kwargs)
-        
-        self.send_response(200)
+
+        res_code, result = self.server.handlemsg(command, kwargs)
+
+        self.send_response(res_code)
         self.send_header('Content-type','text/html')
         self.end_headers()
         # Send the html message
         if result:
-            self.wfile.write(bytes(result, encoding = "utf-16"))
+            self.wfile.write(str(result).encode("utf-16"))
             
         
     def do_POST(self):
         parsed_url = urlparse(self.path)
-        app_name = parsed_url.path[1:]
+        command = parsed_url.path[1:]
         kwargs = dict(parse_qsl(parsed_url.query))
-        print(app_name, kwargs)
         post = self.rfile.read(int(self.headers['content-length']))
         kwargs.update(dict(parse_qsl(post))) 
-        for func in globals()['apps']:
-            if app_name == func.__name__:
-                func(**kwargs)
+        
+        res_code, result = self.server.handlemsg(command, kwargs)
 
+        self.send_response(res_code)
+        self.send_header('Content-type','text/html')
+        self.end_headers()
+        # Send the html message
+        if result:
+            self.wfile.write(str(result).encode("utf-16"))
+
+class MsgServer(HTTPServer):
+    def __init__(self, server_address, RequestHandlerClass=RequestHandler, bind_and_activate=True):
+        HTTPServer.__init__(self, server_address, RequestHandler, bind_and_activate)
+        self.commands = {}
+        self.server_proc = None
+
+    def start(self):
+        self.server_proc = Process(target=self.serve_forever)
+        self.server_proc.daemon = True
+        self.server_proc.start()
+    
+    def stop(self):
+        self.server_proc.terminate()
+        self.server_close()
+    
+    def handlemsg(self, command_name, kwargs):
+        '''200:ok-content   204:ok-nocontent   400:bad req    501:not implemented'''
+        if command_name in self.commands:
+            command = self.commands[command_name]
+            if self._check(kwargs, command):
+                result = self._exec(command['func'], kwargs)
+                if result:
+                    return 200, result
+                else:
+                    return 204, result
+            else:
+                return 400, 'Bad Request (Syntax error)'
+        else:
+            return 501, 'Not Implemented'
+        
+    def _check(self, kwargs, command):
+        required = command['required']
+        optional = command['optional']
+        for key in required:
+            if key not in kwargs:
+                return False
+            try:
+                typ = required[key]
+                kwargs[key] = typ(kwargs[key])
+            except:
+                return False
+        for key in optional:
+            if key not in kwargs:
+                continue
+            try:
+                typ = optional[key]
+                kwargs[key] = typ(kwargs[key])
+            except:
+                return False
+        return True
+
+
+    def _exec(self, func, kwargs):
+        try:
+            return func(**kwargs)
+        except Exception as e:
+            print(e)
+            return None
+            
+
+        
 if __name__ == '__main__':
     import json, requests
     import ctypes
@@ -49,7 +117,7 @@ if __name__ == '__main__':
             result = decoder.decode(html)
             result = result['sentences'][0]['trans']
 
-            user = ctypes.windll.LoadLibrary('user32.dll')
+            user = ctypes.CDLL('user32.dll')
             user.MessageBoxW(None, result, 'translator', 0)
 
             return result
@@ -57,8 +125,30 @@ if __name__ == '__main__':
             print(e, str(e))
             return None
         
-
-    apps = [translator, ]
+    def adder(a, b):
+        return a+b
     address = ('localhost', 8088)
-    server = HTTPServer(address, RequestHandler)
-    server.serve_forever()
+    server = MsgServer(address)
+    server.commands['translator'] = {
+        'func':translator,
+        'required':{
+            'content':str, 
+                },
+        'optional':{
+            'src':str, 
+            'dst':str,
+                },
+        'description':'my translator',
+    }
+    server.commands['adder'] = {
+        'func':adder,
+        'required':{
+            'a':int,
+            'b':int,
+        },
+        'optional':{},
+        'description':'adder',
+    }
+    server.start()
+    input()
+    server.stop()
