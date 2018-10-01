@@ -16,14 +16,20 @@ class RequestHandler(BaseHTTPRequestHandler):
         command = parsed_url.path[1:]
         kwargs = dict(parse_qsl(parsed_url.query))
 
+        encoding = 'utf-8'
+        if 'encoding' in kwargs:
+            encoding = kwargs['encoding']
+
         res_code, result = self.server.handlemsg(command, kwargs)
 
         self.send_response(res_code)
         self.send_header('Content-type','text/html')
         self.end_headers()
         # Send the html message
-        if result:
-            self.wfile.write(str(result).encode("utf-16"))
+        if type(result) == str and result != '':
+            self.wfile.write(bytes(result.encode(encoding)))
+        elif type(result) == int:
+            self.wfile.write(bytes(str(result).encode(encoding)))
             
         
     def do_POST(self):
@@ -33,14 +39,21 @@ class RequestHandler(BaseHTTPRequestHandler):
         post = self.rfile.read(int(self.headers['content-length']))
         kwargs.update(dict(parse_qsl(post))) 
         
+        encoding = 'utf-8'
+        if 'encoding' in kwargs:
+            encoding = kwargs['encoding']
+
         res_code, result = self.server.handlemsg(command, kwargs)
 
         self.send_response(res_code)
         self.send_header('Content-type','text/html')
         self.end_headers()
         # Send the html message
-        if result:
-            self.wfile.write(str(result).encode("utf-16"))
+        if type(result) == str and result != '':
+            self.wfile.write(bytes(result.encode(encoding)))
+        elif type(result) == int:
+            self.wfile.write(bytes(str(result).encode(encoding)))
+
 
 class MsgServer(HTTPServer):
     def __init__(self, server_address, RequestHandlerClass=RequestHandler, bind_and_activate=True):
@@ -107,25 +120,26 @@ if __name__ == '__main__':
     import json, requests
     import ctypes
     
-    def translator(content='', src='auto', dst='zh'):
+    def translator(content='', src='auto', dst='zh', **kwargs):
         if content=='': return None
         GOOGLE_API="http://translate.google.cn/translate_a/single?client=gtx&dt=t&dj=1&ie=UTF-8&sl={src}&tl={dst}&q={content}"
         try:    
             url = GOOGLE_API.format(content=content, src=src, dst=dst)
             decoder = json.JSONDecoder()
             html = requests.get(url, timeout=3).text
-            result = decoder.decode(html)
-            result = result['sentences'][0]['trans']
-
+            result_dict = decoder.decode(html)
+            trans = result_dict['sentences'][0]['trans']
             user = ctypes.CDLL('user32.dll')
-            user.MessageBoxW(None, result, 'translator', 0)
+            title = 'translator: %s' % result_dict['src']
+            msg =  '%s -> %s' % (content, trans)
+            user.MessageBoxW(None, msg, title, 0)
 
-            return result
+            return trans
         except Exception as e:
             print(e, str(e))
             return None
         
-    def adder(a, b):
+    def adder(a, b, **kwargs):
         return a+b
     address = ('localhost', 8088)
     server = MsgServer(address)
@@ -137,6 +151,7 @@ if __name__ == '__main__':
         'optional':{
             'src':str, 
             'dst':str,
+            'encoding':str,
                 },
         'description':'my translator',
     }
