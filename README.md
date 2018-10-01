@@ -22,7 +22,7 @@ if __name__ == '__main__':
     input()
     server.stop()
 ```
-then open fire this url.
+then fire at this url.
 
 `http://localhost:8088/adder?a=1&b=1024`
 
